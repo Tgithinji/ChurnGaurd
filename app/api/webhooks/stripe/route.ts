@@ -16,7 +16,8 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   // Get raw body as text for Stripe signature verification
   // Using blob().text() ensures we get the exact raw body Stripe needs
-  const rawBody = await (await req.blob()).text();
+  const body = await req.arrayBuffer();
+  const rawBody = Buffer.from(body);
   const signature = req.headers.get('stripe-signature');
 
   if (!signature) {
