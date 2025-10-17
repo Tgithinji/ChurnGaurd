@@ -10,10 +10,13 @@ import { sendPaymentFailedEmail } from '@/lib/email';
 // Disable body parsing for Stripe webhooks
 export const runtime = 'nodejs';
 
+// This is critical for Stripe webhooks - prevents Next.js from parsing the body
+export const dynamic = 'force-dynamic';
+
 export async function POST(req: NextRequest) {
-  // Get raw body as buffer for Stripe signature verification
-  const buf = await req.arrayBuffer();
-  const body = Buffer.from(buf);
+  // Get raw body as text for Stripe signature verification
+  // Using blob().text() ensures we get the exact raw body Stripe needs
+  const rawBody = await (await req.blob()).text();
   const signature = req.headers.get('stripe-signature');
 
   if (!signature) {
@@ -24,17 +27,24 @@ export async function POST(req: NextRequest) {
 
   try {
     event = stripe.webhooks.constructEvent(
-      body,
+      rawBody,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
   } catch (err: unknown) {
-    console.error('Webhook signature verification failed:', err instanceof Error ? err.message : 'Unknown error');
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    console.error('❌ Webhook signature verification failed:', errorMessage);
+    console.error('Body length:', rawBody.length);
+    console.error('Signature present:', !!signature);
+    console.error('Webhook secret configured:', !!process.env.STRIPE_WEBHOOK_SECRET);
     return NextResponse.json(
-      { error: 'Webhook signature verification failed' },
+      { error: 'Webhook signature verification failed', message: errorMessage },
       { status: 400 }
     );
   }
+
+  // Successfully constructed event
+  console.log('✅ Webhook verified successfully:', event.type, event.id);
 
   try {
     switch (event.type) {
