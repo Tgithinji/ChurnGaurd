@@ -10,6 +10,7 @@ build/
 
 # Environment
 .env
+.env.test-email
 .env*.local
 !.env.example
 
@@ -34,3 +35,15 @@ Thumbs.db
 
 # Testing
 coverage/
+
+# Development/Testing files (do not commit)
+BUILD_FIXES.md
+DEPLOYMENT_CHECKLIST.md
+FIXES_APPLIED.md
+fix-dev-creator.sql
+seed-test-data.sql
+test-recovery.sh
+.env.test-email
+
+# TypeScript build info
+tsconfig.tsbuildinfo
