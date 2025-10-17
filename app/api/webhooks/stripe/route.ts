@@ -7,11 +7,8 @@ import { stripe } from '@/lib/stripe';
 import { supabaseAdmin } from '@/lib/supabase';
 import { sendPaymentFailedEmail } from '@/lib/email';
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+// Disable body parsing for Stripe webhooks
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
