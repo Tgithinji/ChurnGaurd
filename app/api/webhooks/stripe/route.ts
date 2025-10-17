@@ -11,7 +11,9 @@ import { sendPaymentFailedEmail } from '@/lib/email';
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
-  const body = await req.text();
+  // Get raw body as buffer for Stripe signature verification
+  const buf = await req.arrayBuffer();
+  const body = Buffer.from(buf);
   const signature = req.headers.get('stripe-signature');
 
   if (!signature) {
@@ -166,18 +168,25 @@ export async function POST(req: NextRequest) {
 
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as Stripe.Invoice;
+        console.log('Payment succeeded for invoice:', invoice.id);
 
         // Check if this was a previously failed payment
-        const { data: failedPayment } = await supabaseAdmin
+        const { data: failedPayment, error: fetchError } = await supabaseAdmin
           .from('failed_payments')
           .select('*')
           .eq('stripe_invoice_id', invoice.id)
           .eq('status', 'failed')
           .single();
 
+        if (fetchError) {
+          console.log('No matching failed payment found (this is normal for new subscriptions):', fetchError.message);
+        }
+
         if (failedPayment) {
+          console.log('Found matching failed payment, marking as recovered:', failedPayment.id);
+          
           // Update to recovered status
-          await supabaseAdmin
+          const { error: updateError } = await supabaseAdmin
             .from('failed_payments')
             .update({
               status: 'recovered',
@@ -185,8 +194,14 @@ export async function POST(req: NextRequest) {
             })
             .eq('id', failedPayment.id);
 
+          if (updateError) {
+            console.error('Error updating failed payment status:', updateError);
+          } else {
+            console.log('Successfully updated payment status to recovered');
+          }
+
           // Insert recovery record
-          await supabaseAdmin
+          const { error: insertError } = await supabaseAdmin
             .from('recovered_payments')
             .insert({
               failed_payment_id: failedPayment.id,
@@ -194,7 +209,13 @@ export async function POST(req: NextRequest) {
               stripe_payment_intent_id: invoice.payment_intent as string,
             });
 
-          console.log('Payment recovered:', failedPayment.id);
+          if (insertError) {
+            console.error('Error inserting recovery record:', insertError);
+          } else {
+            console.log('Successfully created recovery record');
+          }
+
+          console.log('Payment recovered successfully:', failedPayment.id);
         }
         break;
       }
