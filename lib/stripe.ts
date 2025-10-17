@@ -1,3 +1,8 @@
-// Copy content from Artifact #2 - Section 5: STRIPE CLIENT
-// This file initializes the Stripe SDK
-export {};
+// ============================================
+// 5. STRIPE CLIENT (lib/stripe.ts)
+// ============================================
+import Stripe from 'stripe';
+
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2024-04-10',
+});
