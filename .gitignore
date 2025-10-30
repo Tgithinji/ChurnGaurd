@@ -10,9 +10,13 @@ build/
 
 # Environment
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .env.test-email
 .env*.local
-!.env.example
+
 
 # Logs
 npm-debug.log*
@@ -44,6 +48,22 @@ fix-dev-creator.sql
 seed-test-data.sql
 test-recovery.sh
 .env.test-email
+backup-*/
+payment.json
+scripts/test-*.sh
+scripts/add-metadata-*.sh
+
+# Documentation (ignore temporary debug/fix docs only)
+WEBHOOK_DEBUG_GUIDE.md
+DASHBOARD_TROUBLESHOOTING.md
+WEBHOOK_TESTING.md
+WEBHOOK_FIX_SUMMARY.md
+BUILD_FIXES_APPLIED.md
+ENV_ERROR_FIX.md
+LINT_FIXES_SUMMARY.md
+TYPESCRIPT_FIXES_FINAL.md
+COMMIT_PLAN.md
+
 
 # TypeScript build info
 tsconfig.tsbuildinfo
