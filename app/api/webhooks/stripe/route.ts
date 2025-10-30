@@ -1,240 +1,227 @@
 // ============================================
-// 7. STRIPE WEBHOOK HANDLER (app/api/webhooks/stripe/route.ts)
+// 10. UPDATED WEBHOOK HANDLER (app/api/webhooks/stripe/route.ts)
 // ============================================
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 import { supabaseAdmin } from '@/lib/supabase';
-import { sendPaymentFailedEmail } from '@/lib/email';
-
-// Disable body parsing for Stripe webhooks
-export const runtime = 'nodejs';
-
-// This is critical for Stripe webhooks - prevents Next.js from parsing the body
-export const dynamic = 'force-dynamic';
+import { Resend } from 'resend';
+import Stripe from 'stripe';
 
 export async function POST(req: NextRequest) {
-  // Get raw body as text for Stripe signature verification
-  // Using blob().text() ensures we get the exact raw body Stripe needs
-  const body = await req.arrayBuffer();
-  const rawBody = Buffer.from(body);
+  console.log('🔔 Webhook received at:', new Date().toISOString());
+  const body = await req.text();
   const signature = req.headers.get('stripe-signature');
 
   if (!signature) {
+    console.error('❌ No Stripe signature found in headers');
     return NextResponse.json({ error: 'No signature' }, { status: 400 });
   }
+  console.log('✅ Stripe signature present');
 
   let event: Stripe.Event;
 
   try {
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      console.error('❌ STRIPE_WEBHOOK_SECRET not configured');
+      return NextResponse.json(
+        { error: 'Webhook secret not configured' },
+        { status: 500 }
+      );
+    }
     event = stripe.webhooks.constructEvent(
-      rawBody,
+      body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
+    console.log('✅ Webhook signature verified, event type:', event.type);
   } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-    console.error('❌ Webhook signature verification failed:', errorMessage);
-    console.error('Body length:', rawBody.length);
-    console.error('Signature present:', !!signature);
-    console.error('Webhook secret configured:', !!process.env.STRIPE_WEBHOOK_SECRET);
+    console.error('❌ Webhook signature verification failed:', err instanceof Error ? err.message : 'Unknown error');
     return NextResponse.json(
-      { error: 'Webhook signature verification failed', message: errorMessage },
+      { error: 'Webhook signature verification failed' },
       { status: 400 }
     );
   }
 
-  // Successfully constructed event
-  console.log('✅ Webhook verified successfully:', event.type, event.id);
-
   try {
     switch (event.type) {
       case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice;
+        console.log('💳 Processing invoice.payment_failed event');
+        const invoice = event.data.object;
+        console.log('📄 Invoice ID:', invoice.id);
+        console.log('👤 Customer ID:', invoice.customer);
         
-        // Get customer details
+        // Get customer details from invoice (already included in webhook payload)
+        // Note: For full customer object with metadata, we need to retrieve it
+        // This uses YOUR Stripe key since the webhook is sent to YOUR endpoint
         const customer = await stripe.customers.retrieve(
           invoice.customer as string
-        ) as Stripe.Customer;
+        );
+        console.log('✅ Customer retrieved:', customer.id);
 
         // Get product name from line items
         const productName = invoice.lines.data[0]?.description || 'Subscription';
         
-        // Find the creator by matching Stripe account
-        // In production, you'd store the Stripe account ID with each creator
-        const { data: settings } = await supabaseAdmin
+        // CRITICAL: Extract creator_id from customer metadata
+        // Customers MUST be created with metadata: { creator_id: 'uuid' }
+        // This metadata was set when the creator created the customer in THEIR Stripe account
+        const customerData = customer as Stripe.Customer;
+        console.log('🔍 Customer metadata:', JSON.stringify(customerData.metadata, null, 2));
+        const creatorId = customerData.metadata?.creator_id;
+        
+        if (!creatorId) {
+          console.error('❌ No creator_id in customer metadata for customer:', customerData.id);
+          console.error('📋 Available metadata keys:', Object.keys(customerData.metadata || {}));
+          console.error('⚠️  Customer must be created with metadata.creator_id');
+          console.error('💡 To fix: Update customer in Stripe with metadata: { creator_id: "your-uuid" }');
+          return NextResponse.json(
+            { error: 'Customer missing creator_id metadata', customerId: customerData.id },
+            { status: 400 }
+          );
+        }
+        console.log('✅ Creator ID found:', creatorId);
+
+        // Get creator settings for this specific creator
+        console.log('🔍 Fetching creator settings for:', creatorId);
+        const { data: settings, error: settingsError } = await supabaseAdmin
           .from('creator_settings')
-          .select('creator_id, email_subject, email_body')
-          .limit(1)
+          .select('creator_id, email_subject, email_body, resend_api_key')
+          .eq('creator_id', creatorId)
           .single();
 
-        if (!settings) {
-          console.log('No creator settings found - using defaults');
-          // Use default values for development
-          const defaultCreatorId = '00000000-0000-0000-0000-000000000001';
-          const defaultSettings = {
-            creator_id: defaultCreatorId,
-            email_subject: 'Please update your payment method',
-            email_body: 'Your payment failed. Please update your payment method at {payment_update_link}'
-          };
-          
-          // Try to insert default creator if not exists
-          const { data: creator, error: creatorError } = await supabaseAdmin
-            .from('creators')
-            .insert({ id: defaultCreatorId, email: 'test@example.com' })
-            .select()
-            .single();
-          
-          if (creatorError) {
-            console.log('Creator insert error:', creatorError);
-            // Check if creator exists
-            const { data: existingCreator } = await supabaseAdmin
-              .from('creators')
-              .select('id')
-              .eq('id', defaultCreatorId)
-              .single();
-            
-            if (!existingCreator) {
-              console.error('Cannot create or find default creator');
-              break;
-            }
-            console.log('Using existing creator');
-          } else {
-            console.log('Created default creator');
-          }
-          
-          // Continue with default settings
-          const { data: failedPayment, error: insertError } = await supabaseAdmin
-            .from('failed_payments')
-            .insert({
-              creator_id: defaultCreatorId,
-              stripe_customer_id: customer.id,
-              stripe_invoice_id: invoice.id,
-              customer_name: customer.name || customer.email || 'Test Customer',
-              customer_email: customer.email || 'test@example.com',
-              product_name: productName,
-              amount: (invoice.amount_due / 100),
-              currency: invoice.currency,
-              status: 'failed',
-              invoice_url: invoice.hosted_invoice_url,
-              payment_intent_id: invoice.payment_intent as string,
-            })
-            .select()
-            .single();
-
-          if (insertError) {
-            console.error('Error inserting failed payment:', insertError);
-            break;
-          }
-
-          console.log('Payment failed event processed with defaults:', failedPayment.id);
-          break;
+        if (settingsError) {
+          console.error('❌ Error fetching creator settings:', settingsError);
         }
 
-        // Insert failed payment record
+        type SettingsType = { creator_id: string; email_subject: string; email_body: string; resend_api_key?: string } | null;
+        const settingsData = settings as SettingsType;
+
+        if (!settingsData) {
+          console.error('❌ No settings found for creator:', creatorId);
+          console.error('💡 Creator needs to configure settings in dashboard first');
+          break;
+        }
+        console.log('✅ Creator settings loaded');
+
+        // Insert failed payment record (RLS enforced by creator_id)
+        console.log('💾 Inserting failed payment record...');
+        const paymentData = {
+          creator_id: settingsData.creator_id,
+          stripe_customer_id: customerData.id,
+          stripe_invoice_id: invoice.id,
+          customer_name: customerData.name || customerData.email || 'Customer',
+          customer_email: customerData.email || null,
+          product_name: productName,
+          amount: (invoice.amount_due / 100),
+          currency: invoice.currency,
+          status: 'failed' as const,
+          invoice_url: invoice.hosted_invoice_url,
+          payment_intent_id: invoice.payment_intent as string,
+        };
+        console.log('📋 Payment data:', JSON.stringify(paymentData, null, 2));
+        
         const { data: failedPayment, error: insertError } = await supabaseAdmin
           .from('failed_payments')
-          .insert({
-            creator_id: settings.creator_id,
-            stripe_customer_id: customer.id,
-            stripe_invoice_id: invoice.id,
-            customer_name: customer.name || customer.email || 'Customer',
-            customer_email: customer.email || 'unknown@example.com',
-            product_name: productName,
-            amount: (invoice.amount_due / 100),
-            currency: invoice.currency,
-            status: 'failed',
-            invoice_url: invoice.hosted_invoice_url,
-            payment_intent_id: invoice.payment_intent as string,
-          })
+          // @ts-expect-error - Supabase type inference issue
+          .insert(paymentData)
           .select()
           .single();
 
         if (insertError) {
-          console.error('Error inserting failed payment:', insertError);
+          console.error('❌ Error inserting failed payment:', insertError);
+          console.error('📋 Error details:', JSON.stringify(insertError, null, 2));
           break;
         }
+        console.log('✅ Failed payment record created:', failedPayment);
 
-        // Send recovery email
-        const updateUrl = invoice.hosted_invoice_url || 'https://billing.stripe.com/';
+        // Send recovery email using creator's Resend key if available
+        console.log('📧 Preparing to send recovery email...');
         
-        // DEVELOPMENT: Override email for testing
-        const testEmail = process.env.TEST_EMAIL || customer.email || 'unknown@example.com';
-        
-        await sendPaymentFailedEmail(
-          testEmail,
-          customer.name || 'Valued Customer',
-          productName,
-          invoice.amount_due / 100,
-          updateUrl,
-          {
-            subject: settings.email_subject,
-            body: settings.email_body
+        // Skip email if customer has no email address
+        if (!customerData.email) {
+          console.log('⚠️  Customer has no email address, skipping email notification');
+        } else {
+          const apiKey = settingsData.resend_api_key || process.env.RESEND_API_KEY;
+          
+          if (!apiKey) {
+            console.error('❌ No Resend API key configured (neither in settings nor env)');
+            console.error('⚠️  Email will not be sent');
+          } else {
+            console.log('✅ Resend API key found:', apiKey.substring(0, 10) + '...');
+            const resendClient = new Resend(apiKey);
+
+            const subject = settingsData.email_subject
+              .replace('{name}', customerData.name || 'Valued Customer');
+
+            const body = settingsData.email_body
+              .replace('{name}', customerData.name || 'Valued Customer')
+              .replace('{product_name}', productName)
+              .replace('{amount}', `${(invoice.amount_due / 100).toFixed(2)}`)
+              .replace('{payment_update_link}', invoice.hosted_invoice_url || 'https://billing.stripe.com/');
+
+            console.log('📧 Sending email to:', customerData.email);
+            console.log('📧 Subject:', subject);
+            
+            try {
+              const emailResult = await resendClient.emails.send({
+                from: 'onboarding@resend.dev',
+                to: [customerData.email],
+                subject,
+                text: body,
+              });
+              
+              // Check if there's an error in the response
+              if (emailResult.error) {
+                console.error('❌ Resend API error:', emailResult.error);
+                console.error('📋 Error details:', JSON.stringify(emailResult.error, null, 2));
+              } else {
+                console.log('✅ Email sent successfully! Email ID:', emailResult.data?.id);
+              }
+            } catch (emailError) {
+              console.error('❌ Error sending email (exception):', emailError);
+              console.error('📋 Email error details:', JSON.stringify(emailError, null, 2));
+            }
           }
-        );
+        }
 
-        console.log('Payment failed event processed:', failedPayment.id);
+        type FailedPaymentType = { id: string } | null;
+        const failedPaymentData = failedPayment as FailedPaymentType;
+        console.log('✅ Payment failed event processed successfully:', failedPaymentData?.id);
         break;
       }
 
       case 'invoice.payment_succeeded': {
-        const invoice = event.data.object as Stripe.Invoice;
-        console.log('Payment succeeded for invoice:', invoice.id);
+        const invoice = event.data.object;
 
         // Check if this was a previously failed payment
-        const { data: failedPayment, error: fetchError } = await supabaseAdmin
+        const { data: failedPayment } = await supabaseAdmin
           .from('failed_payments')
           .select('*')
           .eq('stripe_invoice_id', invoice.id)
           .eq('status', 'failed')
           .single();
 
-        if (fetchError) {
-          console.log('No matching failed payment found (this is normal for new subscriptions):', fetchError.message);
-        }
+        type RecoveredPaymentType = { id: string } | null;
+        const recoveredPaymentData = failedPayment as RecoveredPaymentType;
 
-        if (failedPayment) {
-          console.log('Found matching failed payment, marking as recovered:', failedPayment.id);
-          
+        if (recoveredPaymentData) {
           // Update to recovered status
-          const { error: updateError } = await supabaseAdmin
+          await supabaseAdmin
             .from('failed_payments')
+            // @ts-expect-error - Supabase type inference issue
             .update({
               status: 'recovered',
               recovered_at: new Date().toISOString()
             })
-            .eq('id', failedPayment.id);
+            .eq('id', recoveredPaymentData.id);
 
-          if (updateError) {
-            console.error('Error updating failed payment status:', updateError);
-          } else {
-            console.log('Successfully updated payment status to recovered');
-          }
-
-          // Insert recovery record
-          const { error: insertError } = await supabaseAdmin
-            .from('recovered_payments')
-            .insert({
-              failed_payment_id: failedPayment.id,
-              recovered_amount: invoice.amount_paid / 100,
-              stripe_payment_intent_id: invoice.payment_intent as string,
-            });
-
-          if (insertError) {
-            console.error('Error inserting recovery record:', insertError);
-          } else {
-            console.log('Successfully created recovery record');
-          }
-
-          console.log('Payment recovered successfully:', failedPayment.id);
+          console.log('Payment recovered:', recoveredPaymentData.id);
         }
         break;
       }
 
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object as Stripe.Subscription;
+        const subscription = event.data.object;
         console.log('Subscription deleted:', subscription.id);
-        // Optional: Handle permanent cancellations
         break;
       }
 

@@ -1,10 +1,10 @@
 // ============================================
 // 8. PAYMENTS API (app/api/payments/route.ts)
 // ============================================
-import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient, supabaseAdmin } from '@/lib/supabase';
+import { NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   // DEVELOPMENT MODE: Auth disabled for testing
   // TODO: Re-enable authentication for production
   
@@ -39,9 +39,10 @@ export async function GET(req: NextRequest) {
     if (paymentsError) throw paymentsError;
 
     // Calculate stats
-    const totalFailed = payments?.filter(p => p.status === 'failed').length || 0;
-    const totalRecovered = payments?.filter(p => p.status === 'recovered').length || 0;
-    const recoveredRevenue = payments
+    const paymentsData = payments as Array<{ status: string; amount: number }> | null;
+    const totalFailed = paymentsData?.filter(p => p.status === 'failed').length || 0;
+    const totalRecovered = paymentsData?.filter(p => p.status === 'recovered').length || 0;
+    const recoveredRevenue = paymentsData
       ?.filter(p => p.status === 'recovered')
       .reduce((sum, p) => sum + Number(p.amount), 0) || 0;
     const recoveryRate = payments?.length ? (totalRecovered / payments.length) * 100 : 0;

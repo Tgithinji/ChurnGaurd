@@ -2,9 +2,9 @@
 // 9. SETTINGS API (app/api/settings/route.ts)
 // ============================================
 import { NextRequest, NextResponse } from 'next/server';
-import { getSupabaseClient, supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   // DEVELOPMENT MODE: Auth disabled for testing
   // TODO: Re-enable authentication for production
   
@@ -67,8 +67,8 @@ export async function POST(req: NextRequest) {
 
   // const supabase = getSupabaseClient(token);
   // DEVELOPMENT: Use admin client to bypass RLS
-  const supabase = supabaseAdmin;
-  // const { data: { user }, error: authError } = await supabase.auth.getUser();
+  // const _supabase = supabaseAdmin;
+  // const { data: { user }, error: authError } = await _supabase.auth.getUser();
   
   // if (authError || !user) {
   //   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

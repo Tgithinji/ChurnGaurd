@@ -6,7 +6,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { sendPaymentFailedEmail } from '@/lib/email';
 import { scheduleEmailRetry } from '@/lib/email-retry';
-import { EmailRetry } from '@/types/database';
+import { EmailRetry, FailedPayment, CreatorSettings } from '@/types/database';
+
+type EmailRetryWithPayment = EmailRetry & {
+  failed_payment: FailedPayment;
+};
 
 export async function GET(req: NextRequest) {
   // Verify cron secret to prevent unauthorized access
@@ -31,14 +35,21 @@ export async function GET(req: NextRequest) {
     }
 
     const results = await Promise.allSettled(
-      pendingRetries.map(async (retry: EmailRetry) => {
+      (pendingRetries as EmailRetryWithPayment[]).map(async (retry) => {
         const payment = retry.failed_payment;
+        
+        // Skip if payment data is missing
+        if (!payment) {
+          console.error('Missing payment data for retry:', retry.id);
+          return;
+        }
         
         // Skip if already recovered
         if (payment.status === 'recovered') {
           await supabaseAdmin
             .from('email_retries')
-            .update({ status: 'cancelled' })
+            // @ts-expect-error - Supabase type inference issue with nested select queries
+            .update({ status: 'cancelled' as const })
             .eq('id', retry.id);
           return;
         }
@@ -50,7 +61,12 @@ export async function GET(req: NextRequest) {
           .eq('creator_id', payment.creator_id)
           .single();
 
-        if (!settings) return;
+        const settingsData = settings as CreatorSettings | null;
+
+        if (!settingsData) {
+          console.error('No settings found for creator:', payment.creator_id);
+          return;
+        }
 
         // Send retry email
         await sendPaymentFailedEmail(
@@ -60,16 +76,17 @@ export async function GET(req: NextRequest) {
           payment.amount,
           payment.invoice_url || '',
           {
-            subject: settings.email_subject,
-            body: settings.email_body
+            subject: settingsData.email_subject,
+            body: settingsData.email_body
           }
         );
 
         // Mark as sent
         await supabaseAdmin
           .from('email_retries')
+          // @ts-expect-error - Supabase type inference issue with nested select queries
           .update({ 
-            status: 'sent',
+            status: 'sent' as const,
             sent_at: new Date().toISOString()
           })
           .eq('id', retry.id);
