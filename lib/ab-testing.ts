@@ -54,22 +54,22 @@ export class ABTestManager {
       customer_id: customerId,
       recovered,
       recorded_at: new Date().toISOString()
-    });
+    } as any);
   }
 
   async getVariantPerformance(): Promise<Map<string, { sent: number; recovered: number; rate: number }>> {
     const { data: results } = await supabaseAdmin
       .from('ab_test_results')
-      .select('*');
+      .select('*') as { data: any[] | null };
 
     if (!results) return new Map();
 
     const performance = new Map();
     
     this.variants.forEach(variant => {
-      const variantResults = results.filter(r => r.variant_id === variant.id);
+      const variantResults = results.filter((r: any) => r.variant_id === variant.id);
       const sent = variantResults.length;
-      const recovered = variantResults.filter(r => r.recovered).length;
+      const recovered = variantResults.filter((r: any) => r.recovered).length;
       const rate = sent > 0 ? (recovered / sent) * 100 : 0;
 
       performance.set(variant.id, { sent, recovered, rate });

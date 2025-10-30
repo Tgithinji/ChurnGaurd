@@ -31,7 +31,7 @@ export async function logWebhookEvent(
       error_message: errorMessage,
       creator_id: creatorId,
       processed_at: new Date().toISOString()
-    });
+    } as any);
   } catch (error) {
     console.error('Failed to log webhook event:', error);
   }

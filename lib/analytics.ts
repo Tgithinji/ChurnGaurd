@@ -3,6 +3,17 @@
 // ============================================
 import { supabaseAdmin } from './supabase';
 
+type PaymentStatus = 'failed' | 'recovered' | 'pending';
+
+interface Payment {
+  id: string;
+  status: PaymentStatus;
+  amount: number;
+  product_name: string;
+  created_at: string;
+  recovered_at?: string;
+}
+
 export interface AnalyticsReport {
   period: string;
   totalFailed: number;
@@ -24,7 +35,7 @@ export async function generateAnalyticsReport(
     .select('*')
     .eq('creator_id', creatorId)
     .gte('created_at', startDate.toISOString())
-    .lte('created_at', endDate.toISOString());
+    .lte('created_at', endDate.toISOString()) as { data: Payment[] | null };
 
   if (!payments || payments.length === 0) {
     return {

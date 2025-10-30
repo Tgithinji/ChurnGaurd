@@ -23,5 +23,5 @@ export async function trackPaymentMethodUpdate(
     new_payment_method: newMethod,
     updated_at: new Date().toISOString(),
     triggered_by_email: triggeredByEmail
-  });
+  } as any);
 }

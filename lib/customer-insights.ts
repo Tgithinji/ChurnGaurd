@@ -3,6 +3,17 @@
 // ============================================
 import { supabaseAdmin } from './supabase';
 
+type PaymentStatus = 'failed' | 'recovered' | 'pending';
+
+interface Payment {
+  id: string;
+  status: PaymentStatus;
+  amount: number;
+  customer_email: string;
+  stripe_customer_id: string;
+  created_at: string;
+}
+
 export interface CustomerInsight {
   customerId: string;
   email: string;
@@ -20,12 +31,12 @@ export async function getCustomerInsights(
   const { data: payments } = await supabaseAdmin
     .from('failed_payments')
     .select('*')
-    .eq('creator_id', creatorId);
+    .eq('creator_id', creatorId) as { data: Payment[] | null };
 
   if (!payments) return [];
 
   // Group by customer
-  const customerMap = new Map<string, typeof payments>();
+  const customerMap = new Map<string, Payment[]>();
   payments.forEach(payment => {
     const existing = customerMap.get(payment.stripe_customer_id) || [];
     existing.push(payment);

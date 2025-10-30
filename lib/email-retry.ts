@@ -32,7 +32,7 @@ export async function scheduleEmailRetry(
     retry_number: retryNumber,
     scheduled_at: sendAt.toISOString(),
     status: 'pending'
-  });
+  } as any);
 
   console.log(`Scheduled retry ${retryNumber} for ${failedPaymentId} at ${sendAt}`);
 }

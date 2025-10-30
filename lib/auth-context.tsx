@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .insert({
           id: user.id,
           email: user.email!,
-        });
+        } as any);
 
       if (creatorError) throw creatorError;
 
@@ -92,7 +92,7 @@ If you have any questions, just reply to this email.
 
 Thanks,
 The Team`,
-        });
+        } as any);
 
       if (settingsError) throw settingsError;
 

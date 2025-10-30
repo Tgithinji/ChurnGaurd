@@ -8,6 +8,21 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { Resend } from 'resend';
 import Stripe from 'stripe';
 
+type PaymentStatus = 'failed' | 'recovered' | 'pending';
+type PaymentRecord = {
+  id: string;
+  status: PaymentStatus;
+  // Add other fields as needed
+};
+
+type CreatorSettings = {
+  stripe_api_key: string;
+  stripe_webhook_secret: string;
+  resend_api_key?: string;
+  email_subject?: string;
+  email_body?: string;
+};
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { creatorId: string } }
@@ -20,7 +35,7 @@ export async function POST(
     .from('creator_settings')
     .select('stripe_api_key, stripe_webhook_secret, resend_api_key, email_subject, email_body')
     .eq('creator_id', creatorId)
-    .single();
+    .single<CreatorSettings>();
 
   if (settingsError || !settings) {
     console.error('❌ Creator not found or not configured:', creatorId);
@@ -52,7 +67,7 @@ export async function POST(
 
   // Create Stripe instance with CREATOR's API key
   const creatorStripe = new Stripe(settings.stripe_api_key, {
-    apiVersion: '2024-11-20.acacia',
+    apiVersion: '2024-04-10',
   });
 
   let event: Stripe.Event;
@@ -137,10 +152,12 @@ export async function POST(
             console.log('✅ Resend API key found');
             const resendClient = new Resend(apiKey);
 
-            const subject = settings.email_subject
-              .replace('{name}', customerData.name || 'Valued Customer');
+            const subject = (settings.email_subject || 'Payment Failed for {name}')
+              .replace('{name}', customerData.name || 'Valued Customer')
+              .replace('{amount}', (invoice.amount_due / 100).toFixed(2))
+              .replace('{date}', new Date().toLocaleDateString());
 
-            const body = settings.email_body
+            const body = (settings.email_body || 'Dear {name}, your payment for {product_name} has failed. Please update your payment information to avoid any disruptions. You can update your payment information here: {payment_update_link}.')
               .replace('{name}', customerData.name || 'Valued Customer')
               .replace('{product_name}', productName)
               .replace('{amount}', `${(invoice.amount_due / 100).toFixed(2)}`)
@@ -187,7 +204,7 @@ export async function POST(
           .select('id, status')
           .eq('stripe_invoice_id', invoice.id)
           .eq('creator_id', creatorId)
-          .single();
+          .single<PaymentRecord>();
 
         if (existingPayment && existingPayment.status === 'failed') {
           console.log('🔄 Marking payment as recovered:', existingPayment.id);

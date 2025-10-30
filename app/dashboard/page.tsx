@@ -71,7 +71,7 @@ export default function DashboardPage() {
         .from('failed_payments')
         .select('*')
         .eq('creator_id', user.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }) as { data: Payment[] | null, error: any };
 
       if (paymentsError) throw paymentsError;
 
@@ -107,21 +107,20 @@ export default function DashboardPage() {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
+      const { data, error: settingsError } = await supabase
         .from('creator_settings')
         .select('*')
         .eq('creator_id', user.id)
-        .single();
+        .single<CreatorSettings>();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
 
       if (data) {
         setSettings({
+          ...data,
           stripe_api_key: data.stripe_api_key || '',
           stripe_webhook_secret: data.stripe_webhook_secret || '',
           webhook_url: data.webhook_url || '',
-          email_subject: data.email_subject,
-          email_body: data.email_body,
           resend_api_key: data.resend_api_key || ''
         });
       }
@@ -139,13 +138,15 @@ export default function DashboardPage() {
     setSuccess(null);
 
     try {
+      const settingsToSave = {
+        creator_id: user.id,
+        ...settings,
+        updated_at: new Date().toISOString()
+      };
+
       const { error } = await supabase
         .from('creator_settings')
-        .upsert({
-          creator_id: user.id,
-          ...settings,
-          updated_at: new Date().toISOString()
-        }, {
+        .upsert(settingsToSave as any, {
           onConflict: 'creator_id'
         });
 
